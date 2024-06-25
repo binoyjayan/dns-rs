@@ -27,6 +27,7 @@ pub(crate) struct DnsHeader {
 }
 
 impl DnsHeader {
+    pub(crate) const SIZE: usize = 12;
     pub(crate) const QR_MASK: u16 = 0b1000_0000_0000_0000;
     pub(crate) const OPCODE_MASK: u16 = 0b0111_1000_0000_0000;
     pub(crate) const AA_MASK: u16 = 0b0000_0100_0000_0000;
@@ -55,6 +56,9 @@ impl DnsHeader {
     }
     pub(crate) fn get_rd(&self) -> bool {
         ((self.flags & Self::RD_MASK) >> 8) == 1
+    }
+    pub(crate) fn get_qdcount(&self) -> u16 {
+        self.qdcount
     }
 
     pub(crate) fn set_qr(&mut self, qr: bool) {
