@@ -9,6 +9,10 @@ pub(crate) struct DnsQuery {
     pub(crate) size: usize,
 }
 
+impl DnsQuery {
+    pub(crate) const PTR_MASK: u8 = 0b1100_0000;
+}
+
 impl<'a> TryFrom<&'a [u8]> for DnsQuery {
     type Error = std::array::TryFromSliceError;
 
@@ -48,4 +52,17 @@ impl<'a> TryFrom<&'a [u8]> for DnsQuery {
             size: pos,
         })
     }
+}
+
+pub(crate) fn parse_query(buf: &[u8], offset: usize, size: usize) -> anyhow::Result<DnsQuery> {
+    let data = &buf[offset..size];
+    let len = data[0];
+    // Check if the length is a pointer
+    if len & DnsQuery::PTR_MASK == DnsQuery::PTR_MASK {
+        // The length is a pointer to another offset in the packet
+        // after clearing the two most significant bits
+        let off = (len & !DnsQuery::PTR_MASK) as usize;
+        return parse_query(buf, offset + off, size);
+    }
+    DnsQuery::try_from(data).map_err(|err| anyhow::anyhow!(err))
 }

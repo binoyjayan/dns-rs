@@ -2,15 +2,7 @@ use std::net::UdpSocket;
 
 mod dns;
 
-use dns::{header::DnsHeader, query::DnsQuery};
-
-fn convert_to_dns_header(buf: &[u8]) -> anyhow::Result<DnsHeader> {
-    DnsHeader::try_from(buf).map_err(|err| anyhow::anyhow!(err))
-}
-
-fn convert_to_dns_query(buf: &[u8]) -> anyhow::Result<dns::query::DnsQuery> {
-    DnsQuery::try_from(buf).map_err(|err| anyhow::anyhow!(err))
-}
+use dns::{header::parse_header, header::DnsHeader, query::parse_query};
 
 fn main() -> anyhow::Result<()> {
     let udp_socket = UdpSocket::bind("127.0.0.1:2053").expect("Failed to bind to address");
@@ -18,7 +10,7 @@ fn main() -> anyhow::Result<()> {
     loop {
         match udp_socket.recv_from(&mut buf) {
             Ok((size, source)) => {
-                let dnsreq = convert_to_dns_header(&buf)?;
+                let dnsreq = parse_header(&buf)?;
                 let req_id = dnsreq.get_id();
                 let req_opcode = dnsreq.get_opcode();
                 let req_rd = dnsreq.get_rd();
@@ -52,8 +44,7 @@ fn main() -> anyhow::Result<()> {
 
                 // Write responses for all the queries
                 while offset < size {
-                    let data = &buf[offset..size];
-                    let dnsquery = convert_to_dns_query(data)?;
+                    let dnsquery = parse_query(&buf, offset, size)?;
                     let qname = dnsquery.qname;
 
                     // DNS Query section

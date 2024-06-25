@@ -137,3 +137,7 @@ impl<'a> TryFrom<&'a [u8]> for DnsHeader {
         })
     }
 }
+
+pub(crate) fn parse_header(buf: &[u8]) -> anyhow::Result<DnsHeader> {
+    DnsHeader::try_from(buf).map_err(|err| anyhow::anyhow!(err))
+}
