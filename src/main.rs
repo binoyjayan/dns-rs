@@ -10,7 +10,8 @@ fn main() -> anyhow::Result<()> {
     loop {
         match udp_socket.recv_from(&mut buf) {
             Ok((size, source)) => {
-                let dnsreq = parse_header(&buf)?;
+                let buf = &buf[..size];
+                let dnsreq = parse_header(buf)?;
                 let req_id = dnsreq.get_id();
                 let req_opcode = dnsreq.get_opcode();
                 let req_rd = dnsreq.get_rd();
@@ -35,16 +36,12 @@ fn main() -> anyhow::Result<()> {
 
                 // Write the DNS header to the response
                 let mut packet: Vec<u8> = Vec::from(&dns);
+                let mut ans: Vec<u8> = Vec::new();
                 let mut offset = DnsHeader::SIZE;
-
-                println!(
-                    "DNS request [ id: {}, opcode: {}, qdcount: {} size: {} ]",
-                    req_id, req_opcode, req_qdcount, size,
-                );
 
                 // Write responses for all the queries
                 while offset < size {
-                    let dnsquery = parse_query(&buf, offset, size)?;
+                    let dnsquery = parse_query(buf, offset)?;
                     let qname = dnsquery.qname;
 
                     // DNS Query section
@@ -53,15 +50,18 @@ fn main() -> anyhow::Result<()> {
                     packet.extend_from_slice(&1u16.to_be_bytes()); // class IN
 
                     // DNS Answer section
-                    packet.extend_from_slice(&qname);
-                    packet.extend_from_slice(&1u16.to_be_bytes()); // DNS type A
-                    packet.extend_from_slice(&1u16.to_be_bytes()); // class IN
-                    packet.extend_from_slice(&60u32.to_be_bytes()); // TTL
-                    packet.extend_from_slice(&4u16.to_be_bytes()); // rdata length
-                    packet.extend_from_slice(&[8, 8, 8, 8]); // rdata
+                    ans.extend_from_slice(&qname);
+                    ans.extend_from_slice(&1u16.to_be_bytes()); // DNS type A
+                    ans.extend_from_slice(&1u16.to_be_bytes()); // class IN
+                    ans.extend_from_slice(&60u32.to_be_bytes()); // TTL
+                    ans.extend_from_slice(&4u16.to_be_bytes()); // rdata length
+                    ans.extend_from_slice(&[8, 8, 8, 8]); // rdata
 
-                    offset += dnsquery.size;
+                    offset = dnsquery.pos;
                 }
+
+                // Extend the packet with the answer section
+                packet.extend_from_slice(&ans);
 
                 udp_socket
                     .send_to(&packet, source)

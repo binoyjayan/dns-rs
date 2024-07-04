@@ -1,3 +1,5 @@
+use anyhow::Context;
+
 #[allow(dead_code)]
 #[derive(Debug)]
 /// DNS Query
@@ -6,28 +8,38 @@ pub(crate) struct DnsQuery {
     pub(crate) name: String,
     pub(crate) qtype: u16,
     pub(crate) qclass: u16,
-    pub(crate) size: usize,
+    pub(crate) pos: usize,
 }
 
 impl DnsQuery {
     pub(crate) const PTR_MASK: u8 = 0b1100_0000;
 }
 
-impl<'a> TryFrom<&'a [u8]> for DnsQuery {
-    type Error = std::array::TryFromSliceError;
-
-    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-        // Parse sequence of labels encoded as '<length><content>'
-        let mut qname = Vec::new();
-        let mut name = String::new();
-        let mut pos = 0;
-        while pos < buf.len() {
-            let len = buf[pos];
+pub(crate) fn parse_label_sequence(
+    buf: &[u8],
+    mut pos: usize,
+) -> anyhow::Result<(Vec<u8>, String, usize)> {
+    let mut qname = Vec::new();
+    let mut name = String::new();
+    let mut complete = false;
+    while pos < buf.len() {
+        let len = buf[pos];
+        pos += 1;
+        if len & DnsQuery::PTR_MASK == DnsQuery::PTR_MASK {
+            // Two bytes pointer
+            let pointer =
+                ((len as usize & !(DnsQuery::PTR_MASK as usize)) << 8) | buf[pos] as usize;
             pos += 1;
-            if len == 0 {
-                qname.push(0);
-                break;
-            }
+            let (pqname, pname, _) = parse_label_sequence(buf, pointer)?;
+            qname.extend(pqname);
+            name.push_str(&pname);
+            complete = true;
+            break;
+        } else if len == 0 {
+            qname.push(0);
+            complete = true;
+            break;
+        } else {
             let end = pos + len as usize;
             let label = &buf[pos..end];
             qname.push(len);
@@ -36,33 +48,39 @@ impl<'a> TryFrom<&'a [u8]> for DnsQuery {
             name.push('.');
             pos += len as usize;
         }
-        name.pop(); // Remove the trailing '.'
-
-        // Here we convert slices of the buffer into arrays for from_be_bytes.
-        let qtype = u16::from_be_bytes(buf[pos..pos + 2].try_into().unwrap());
-        pos += 2;
-        let qclass = u16::from_be_bytes(buf[pos..pos + 2].try_into().unwrap());
-        pos += 2;
-
-        Ok(Self {
-            qname,
-            name,
-            qtype,
-            qclass,
-            size: pos,
-        })
     }
+    if !complete {
+        return Err(anyhow::anyhow!("Incomplete label sequence"));
+    }
+    Ok((qname, name, pos))
 }
 
-pub(crate) fn parse_query(buf: &[u8], offset: usize, size: usize) -> anyhow::Result<DnsQuery> {
-    let data = &buf[offset..size];
-    let len = data[0];
-    // Check if the length is a pointer
-    if len & DnsQuery::PTR_MASK == DnsQuery::PTR_MASK {
-        // The length is a pointer to another offset in the packet
-        // after clearing the two most significant bits
-        let off = (len & !DnsQuery::PTR_MASK) as usize;
-        return parse_query(buf, offset + off, size);
+pub(crate) fn parse_query(buf: &[u8], pos: usize) -> anyhow::Result<DnsQuery> {
+    let (qname, name, mut pos) = parse_label_sequence(buf, pos)?;
+    if pos + 4 > buf.len() {
+        return Err(anyhow::anyhow!(format!(
+            "Position exceeds buffer size ({} > {})",
+            pos + 4,
+            buf.len()
+        )));
     }
-    DnsQuery::try_from(data).map_err(|err| anyhow::anyhow!(err))
+    let qtype = u16::from_be_bytes(
+        buf[pos..pos + 2]
+            .try_into()
+            .context("Failed to convert qtype")?,
+    );
+    pos += 2;
+    let qclass = u16::from_be_bytes(
+        buf[pos..pos + 2]
+            .try_into()
+            .context("Failed to convert qclass")?,
+    );
+    pos += 2;
+    Ok(DnsQuery {
+        qname,
+        name,
+        qtype,
+        qclass,
+        pos,
+    })
 }
